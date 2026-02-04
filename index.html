@@ -1,95 +1,155 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Bit Planes Clone</title>
+    <title>Bit Planes - 2 Player/AI</title>
     <style>
-        body { margin: 0; background: #222; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
-        canvas { background: #34495e; border: 4px solid #fff; }
-        .controls { position: absolute; top: 10px; color: white; }
+        body { margin: 0; background: #222; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Courier New', Courier, monospace; }
+        canvas { background: #34495e; border: 4px solid #ecf0f1; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        .ui { position: absolute; top: 20px; color: white; text-align: center; pointer-events: none; }
     </style>
 </head>
 <body>
-    <div class="controls">Arrows to Fly | Space to Shoot</div>
+    <div class="ui">YELLOW: Arrows + Space | RED: AI Hunter<br>Score: <span id="score">0</span></div>
     <canvas id="gameCanvas"></canvas>
 
 <script>
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
     canvas.width = 800;
     canvas.height = 600;
 
-    const player = {
-        x: 400, y: 300,
-        speed: 0,
-        maxSpeed: 5,
-        angle: 0,
-        rotation: 0.07,
-        bullets: []
-    };
+    let score = 0;
 
-    const keys = {};
-    window.addEventListener('keydown', e => keys[e.code] = true);
-    window.addEventListener('keyup', e => keys[e.code] = false);
-
-    function update() {
-        // Rotation
-        if (keys['ArrowLeft']) player.angle -= player.rotation;
-        if (keys['ArrowRight']) player.angle += player.rotation;
-
-        // Constant Forward Thrust (The "Plane" feel)
-        player.speed = 3.5; 
-        player.x += Math.cos(player.angle) * player.speed;
-        player.y += Math.sin(player.angle) * player.speed;
-
-        // Screen Wrap
-        if (player.x > canvas.width) player.x = 0;
-        if (player.x < 0) player.x = canvas.width;
-        if (player.y > canvas.height) player.y = 0;
-        if (player.y < 0) player.y = canvas.height;
-
-        // Shoot (Debounced)
-        if (keys['Space'] && player.bullets.length < 5) {
-            player.bullets.push({
-                x: player.x, y: player.y,
-                angle: player.angle, speed: 8
-            });
-            keys['Space'] = false; // Simple semi-auto trigger
+    class Plane {
+        constructor(x, y, color, isAI) {
+            this.x = x; this.y = y;
+            this.color = color;
+            this.isAI = isAI;
+            this.angle = 0;
+            this.speed = 3;
+            this.bullets = [];
+            this.radius = 12; // For collision
+            this.alive = true;
         }
 
-        // Update Bullets
-        player.bullets.forEach((b, i) => {
-            b.x += Math.cos(b.angle) * b.speed;
-            b.y += Math.sin(b.angle) * b.speed;
-            if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
-                player.bullets.splice(i, 1);
+        draw() {
+            if (!this.alive) return;
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle);
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.moveTo(15, 0); ctx.lineTo(-10, -10); ctx.lineTo(-10, 10);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+
+            this.bullets.forEach(b => {
+                ctx.fillStyle = "white";
+                ctx.fillRect(b.x, b.y, 4, 4);
+            });
+        }
+
+        update(target) {
+            if (!this.alive) return;
+
+            if (this.isAI) {
+                // Basic AI: Calculate angle to player
+                let dx = target.x - this.x;
+                let dy = target.y - this.y;
+                let targetAngle = Math.atan2(dy, dx);
+                
+                // Slowly rotate toward player
+                let diff = targetAngle - this.angle;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                this.angle += diff * 0.03; 
+
+                // AI fires if pointed roughly at player
+                if (Math.abs(diff) < 0.1 && Math.random() < 0.02) this.shoot();
             }
-        });
+
+            // Move forward
+            this.x += Math.cos(this.angle) * this.speed;
+            this.y += Math.sin(this.angle) * this.speed;
+
+            // Screen Wrap
+            if (this.x > canvas.width) this.x = 0;
+            if (this.x < 0) this.x = canvas.width;
+            if (this.y > canvas.height) this.y = 0;
+            if (this.y < 0) this.y = canvas.height;
+
+            // Update Bullets
+            this.bullets.forEach((b, i) => {
+                b.x += Math.cos(b.angle) * 7;
+                b.y += Math.sin(b.angle) * 7;
+                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+                    this.bullets.splice(i, 1);
+                }
+            });
+        }
+
+        shoot() {
+            if (this.bullets.length < 3) {
+                this.bullets.push({ x: this.x, y: this.y, angle: this.angle });
+            }
+        }
     }
 
-    function draw() {
+    const player = new Plane(100, 300, "#f1c40f", false);
+    const enemy = new Plane(700, 300, "#e74c3c", true);
+
+    const keys = {};
+    window.addEventListener('keydown', e => {
+        keys[e.code] = true;
+        if (e.code === 'Space') player.shoot();
+    });
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    function checkCollision(obj1, obj2) {
+        let dx = obj1.x - obj2.x;
+        let dy = obj1.y - obj2.y;
+        return Math.sqrt(dx*dx + dy*dy) < (obj1.radius || 5) + (obj2.radius || 5);
+    }
+
+    function gameLoop() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Draw Player (Triangle shape)
-        ctx.save();
-        ctx.translate(player.x, player.y);
-        ctx.rotate(player.angle);
-        ctx.fillStyle = "#f1c40f";
-        ctx.beginPath();
-        ctx.moveTo(15, 0);
-        ctx.lineTo(-10, -10);
-        ctx.lineTo(-10, 10);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
+        // Player Controls
+        if (keys['ArrowLeft']) player.angle -= 0.07;
+        if (keys['ArrowRight']) player.angle += 0.07;
 
-        // Draw Bullets
-        ctx.fillStyle = "white";
-        player.bullets.forEach(b => ctx.fillRect(b.x, b.y, 4, 4));
+        player.update();
+        enemy.update(player);
 
-        requestAnimationFrame(() => { update(); draw(); });
+        // Collision: Player bullets hitting Enemy
+        player.bullets.forEach((b, i) => {
+            if (enemy.alive && checkCollision(b, enemy)) {
+                enemy.alive = false;
+                player.bullets.splice(i, 1);
+                score += 100;
+                scoreEl.innerText = score;
+                setTimeout(() => { enemy.alive = true; enemy.x = Math.random()*canvas.width; }, 2000);
+            }
+        });
+
+        // Collision: Enemy bullets hitting Player
+        enemy.bullets.forEach((b, i) => {
+            if (player.alive && checkCollision(b, player)) {
+                player.alive = false;
+                enemy.bullets.splice(i, 1);
+                setTimeout(() => { player.alive = true; player.x = 100; player.y = 300; }, 2000);
+            }
+        });
+
+        player.draw();
+        enemy.draw();
+
+        requestAnimationFrame(gameLoop);
     }
 
-    draw();
+    gameLoop();
 </script>
 </body>
 </html>
