@@ -1,155 +1,143 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Bit Planes - 2 Player/AI</title>
+    <title>Web Space Program</title>
     <style>
-        body { margin: 0; background: #222; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Courier New', Courier, monospace; }
-        canvas { background: #34495e; border: 4px solid #ecf0f1; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-        .ui { position: absolute; top: 20px; color: white; text-align: center; pointer-events: none; }
+        body { margin: 0; background: #000; overflow: hidden; color: #0f0; font-family: 'Courier New', monospace; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 20px; left: 20px; border: 1px solid #0f0; padding: 10px; background: rgba(0,20,0,0.8); pointer-events: none; }
+        .gauge { margin-bottom: 5px; }
     </style>
 </head>
 <body>
-    <div class="ui">YELLOW: Arrows + Space | RED: AI Hunter<br>Score: <span id="score">0</span></div>
-    <canvas id="gameCanvas"></canvas>
+    <div id="ui">
+        <div class="gauge">ALTITUDE: <span id="alt">0</span> km</div>
+        <div class="gauge">VELOCITY: <span id="vel">0</span> m/s</div>
+        <div class="gauge">FUEL: <span id="fuel">100</span>%</div>
+        <hr>
+        <div style="font-size: 0.8em;">W/S: Thrust | A/D: Rotate | SPACE: RCS Stabilize</div>
+    </div>
+    <canvas id="spaceCanvas"></canvas>
 
 <script>
-    const canvas = document.getElementById('gameCanvas');
+    const canvas = document.getElementById('spaceCanvas');
     const ctx = canvas.getContext('2d');
-    const scoreEl = document.getElementById('score');
-    canvas.width = 800;
-    canvas.height = 600;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-    let score = 0;
+    // Physics Constants
+    const G = 0.5; // Gravity strength
+    const EARTH_X = canvas.width / 2;
+    const EARTH_Y = canvas.height / 2;
+    const EARTH_RADIUS = 100;
 
-    class Plane {
-        constructor(x, y, color, isAI) {
-            this.x = x; this.y = y;
-            this.color = color;
-            this.isAI = isAI;
-            this.angle = 0;
-            this.speed = 3;
-            this.bullets = [];
-            this.radius = 12; // For collision
-            this.alive = true;
-        }
-
-        draw() {
-            if (!this.alive) return;
-            ctx.save();
-            ctx.translate(this.x, this.y);
-            ctx.rotate(this.angle);
-            ctx.fillStyle = this.color;
-            ctx.beginPath();
-            ctx.moveTo(15, 0); ctx.lineTo(-10, -10); ctx.lineTo(-10, 10);
-            ctx.closePath();
-            ctx.fill();
-            ctx.restore();
-
-            this.bullets.forEach(b => {
-                ctx.fillStyle = "white";
-                ctx.fillRect(b.x, b.y, 4, 4);
-            });
-        }
-
-        update(target) {
-            if (!this.alive) return;
-
-            if (this.isAI) {
-                // Basic AI: Calculate angle to player
-                let dx = target.x - this.x;
-                let dy = target.y - this.y;
-                let targetAngle = Math.atan2(dy, dx);
-                
-                // Slowly rotate toward player
-                let diff = targetAngle - this.angle;
-                while (diff < -Math.PI) diff += Math.PI * 2;
-                while (diff > Math.PI) diff -= Math.PI * 2;
-                this.angle += diff * 0.03; 
-
-                // AI fires if pointed roughly at player
-                if (Math.abs(diff) < 0.1 && Math.random() < 0.02) this.shoot();
-            }
-
-            // Move forward
-            this.x += Math.cos(this.angle) * this.speed;
-            this.y += Math.sin(this.angle) * this.speed;
-
-            // Screen Wrap
-            if (this.x > canvas.width) this.x = 0;
-            if (this.x < 0) this.x = canvas.width;
-            if (this.y > canvas.height) this.y = 0;
-            if (this.y < 0) this.y = canvas.height;
-
-            // Update Bullets
-            this.bullets.forEach((b, i) => {
-                b.x += Math.cos(b.angle) * 7;
-                b.y += Math.sin(b.angle) * 7;
-                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
-                    this.bullets.splice(i, 1);
-                }
-            });
-        }
-
-        shoot() {
-            if (this.bullets.length < 3) {
-                this.bullets.push({ x: this.x, y: this.y, angle: this.angle });
-            }
-        }
-    }
-
-    const player = new Plane(100, 300, "#f1c40f", false);
-    const enemy = new Plane(700, 300, "#e74c3c", true);
+    const ship = {
+        x: EARTH_X,
+        y: EARTH_Y - 150,
+        vx: 2, // Initial orbital velocity
+        vy: 0,
+        angle: -Math.PI / 2,
+        thrust: 0.05,
+        fuel: 1000,
+        rotation: 0.05
+    };
 
     const keys = {};
-    window.addEventListener('keydown', e => {
-        keys[e.code] = true;
-        if (e.code === 'Space') player.shoot();
-    });
-    window.addEventListener('keyup', e => keys[e.code] = false);
+    window.onkeydown = (e) => keys[e.code] = true;
+    window.onkeyup = (e) => keys[e.code] = false;
 
-    function checkCollision(obj1, obj2) {
-        let dx = obj1.x - obj2.x;
-        let dy = obj1.y - obj2.y;
-        return Math.sqrt(dx*dx + dy*dy) < (obj1.radius || 5) + (obj2.radius || 5);
+    function update() {
+        // 1. Calculate Gravity
+        let dx = EARTH_X - ship.x;
+        let dy = EARTH_Y - ship.y;
+        let distSq = dx*dx + dy*dy;
+        let dist = Math.sqrt(distSq);
+        let force = G * 5000 / distSq; // Inverse square law
+        
+        // Apply Gravity acceleration
+        ship.vx += (dx / dist) * force;
+        ship.vy += (dy / dist) * force;
+
+        // 2. Player Input (Thrust)
+        if (keys['KeyW'] && ship.fuel > 0) {
+            ship.vx += Math.cos(ship.angle) * ship.thrust;
+            ship.vy += Math.sin(ship.angle) * ship.thrust;
+            ship.fuel -= 1;
+        }
+        if (keys['KeyS'] && ship.fuel > 0) {
+            ship.vx -= Math.cos(ship.angle) * (ship.thrust * 0.5);
+            ship.vy -= Math.sin(ship.angle) * (ship.thrust * 0.5);
+            ship.fuel -= 0.5;
+        }
+        if (keys['KeyA']) ship.angle -= ship.rotation;
+        if (keys['KeyD']) ship.angle += ship.rotation;
+
+        // 3. RCS Stabilization (Spacebar)
+        if (keys['Space']) {
+            ship.vx *= 0.99; // Simple drag to simulate station keeping
+            ship.vy *= 0.99;
+        }
+
+        // 4. Update Position
+        ship.x += ship.vx;
+        ship.y += ship.vy;
+
+        // Update UI
+        document.getElementById('alt').innerText = Math.round(dist - EARTH_RADIUS);
+        document.getElementById('vel').innerText = Math.round(Math.sqrt(ship.vx**2 + ship.vy**2) * 100);
+        document.getElementById('fuel').innerText = Math.max(0, Math.round(ship.fuel / 10));
+
+        // Collision Check
+        if (dist < EARTH_RADIUS) {
+            alert("Touchdown or Crash! Resetting flight.");
+            location.reload();
+        }
     }
 
-    function gameLoop() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    function draw() {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Player Controls
-        if (keys['ArrowLeft']) player.angle -= 0.07;
-        if (keys['ArrowRight']) player.angle += 0.07;
+        // Draw Earth
+        ctx.beginPath();
+        ctx.arc(EARTH_X, EARTH_Y, EARTH_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = '#2980b9'; // Blue Earth
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
 
-        player.update();
-        enemy.update(player);
+        // Draw Atmosphere glow
+        ctx.beginPath();
+        ctx.arc(EARTH_X, EARTH_Y, EARTH_RADIUS + 20, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(100, 200, 255, 0.2)';
+        ctx.stroke();
 
-        // Collision: Player bullets hitting Enemy
-        player.bullets.forEach((b, i) => {
-            if (enemy.alive && checkCollision(b, enemy)) {
-                enemy.alive = false;
-                player.bullets.splice(i, 1);
-                score += 100;
-                scoreEl.innerText = score;
-                setTimeout(() => { enemy.alive = true; enemy.x = Math.random()*canvas.width; }, 2000);
-            }
-        });
+        // Draw Ship (The Command Module)
+        ctx.save();
+        ctx.translate(ship.x, ship.y);
+        ctx.rotate(ship.angle);
+        
+        // Ship Body
+        ctx.fillStyle = '#bdc3c7';
+        ctx.beginPath();
+        ctx.moveTo(10, 0);
+        ctx.lineTo(-5, -7);
+        ctx.lineTo(-5, 7);
+        ctx.closePath();
+        ctx.fill();
 
-        // Collision: Enemy bullets hitting Player
-        enemy.bullets.forEach((b, i) => {
-            if (player.alive && checkCollision(b, player)) {
-                player.alive = false;
-                enemy.bullets.splice(i, 1);
-                setTimeout(() => { player.alive = true; player.x = 100; player.y = 300; }, 2000);
-            }
-        });
+        // Thruster flame
+        if (keys['KeyW'] && ship.fuel > 0) {
+            ctx.fillStyle = '#f39c12';
+            ctx.fillRect(-12, -3, 6, 6);
+        }
+        ctx.restore();
 
-        player.draw();
-        enemy.draw();
-
-        requestAnimationFrame(gameLoop);
+        update();
+        requestAnimationFrame(draw);
     }
 
-    gameLoop();
+    draw();
 </script>
 </body>
 </html>
